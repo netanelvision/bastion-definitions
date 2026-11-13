@@ -149,6 +149,21 @@ def compiles(rules):
     return out.returncode == 0
 
 
+def corpus_folders():
+    """CLEAN_CORPUS, with each app in /Applications listed separately so the (huge, many-copies)
+    Xcode installs on CI runners can be skipped — they would make the check take 10+ minutes."""
+    for folder in CLEAN_CORPUS:
+        if not os.path.isdir(folder):
+            continue
+        if folder != "/Applications":
+            yield folder
+            continue
+        for name in sorted(os.listdir(folder)):
+            if name.startswith("Xcode") or name.startswith("."):
+                continue
+            yield os.path.join(folder, name)
+
+
 def vet_rules(rules):
     """Keep rules that compile on their own and never fire on the clean corpus."""
     good = [r for r in rules if compiles([r])]
@@ -156,9 +171,7 @@ def vet_rules(rules):
     with tempfile.NamedTemporaryFile("w", suffix=".yar", delete=False) as f:
         f.write(imports_for(good) + "\n".join(good))
     noisy = set()
-    for folder in CLEAN_CORPUS:
-        if not os.path.isdir(folder):
-            continue
+    for folder in corpus_folders():
         out = subprocess.run(["yara", "-r", "-N", "-p", "8", "-w", f.name, folder],
                              capture_output=True, text=True)
         for line in out.stdout.splitlines():
