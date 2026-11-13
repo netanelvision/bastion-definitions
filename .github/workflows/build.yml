@@ -1,0 +1,48 @@
+name: Build definitions
+
+on:
+  schedule:
+    - cron: "17 2 * * *"   # every night at 02:17 UTC
+  workflow_dispatch:        # "Run workflow" button for a manual update
+
+permissions:
+  contents: write           # publish the release
+
+concurrency:
+  group: definitions
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # macOS runner: the false-alarm check scans real Apple apps and tools.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install YARA
+        run: brew install yara
+
+      - name: Build bundle
+        env:
+          ABUSECH_KEY: ${{ secrets.ABUSECH_KEY }}
+        run: python3 build.py
+
+      - name: Sign manifest
+        env:
+          BASTION_SIGNING_KEY: ${{ secrets.BASTION_SIGNING_KEY }}
+        run: ./sign.sh
+
+      - name: Publish to the "definitions" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python3 -c "import json;print(json.load(open('dist/manifest.json'))['version'])")
+          if ! gh release view definitions >/dev/null 2>&1; then
+            gh release create definitions --title "Threat definitions" --notes "Latest signed Bastion threat definitions."
+          fi
+          # Data files first, manifest + signature last, so clients never see a manifest
+          # pointing at files that aren't uploaded yet.
+          gh release upload definitions dist/signatures.txt dist/rules-yaraforge.yar dist/NOTICE.txt --clobber
+          gh release upload definitions dist/manifest.json dist/manifest.sig --clobber
+          gh release edit definitions --notes "Version $VERSION — $(python3 -c "import json;c=json.load(open('dist/manifest.json'))['counts'];print(f\"{c['hashes']} hashes, {c['rules']} YARA rules\")")"
